@@ -1,8 +1,15 @@
 # WordCamp Bookmarlket
 
-WordCamp Bookmarklet
-
 Simple WordCamp bookmarklets for various stuffs.
+
+A bookmarklet is a small pieced of JavaScript code saved as a bookmark in your web browser (usually in the bookmarks bar) that adds quick one-click functionality to the current page.
+
+## wordcamp-bookmarklet
+
+To install this bookmarklet:
+
+ 1. go to https://wp-italia-community.github.io/wordcamp-bookmarklet/ and drag "WordCamp Bookmarklet" button link to your bookmarks bar.
+ 2. Go to **Tickets > Attendees** admin page of a WordCamp site and click the bookmark you just added.
 
 ## Contributing
 
