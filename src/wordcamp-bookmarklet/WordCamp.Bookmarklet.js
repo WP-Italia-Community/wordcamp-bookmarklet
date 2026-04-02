@@ -52,7 +52,7 @@ WordCamp.Bookmarklet = class {
 
 		// Check for min version (for local development).
 		const js_node_href = $( '#wordcamp-bookmarklet-js' ).attr( 'src' );
-		const min = /min/.test( js_node_href ) ? '.min ': '';
+		const min = /min/.test( js_node_href ) ? '.min': '';
 		const timestamp = '?_t=' + +(new Date());
 
 		// Load dependecies assets synchronously.
