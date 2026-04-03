@@ -108,6 +108,14 @@ section.wordcamp-bookmarklet {
 	display: none;
 }
 
+section.wordcamp-bookmarklet .summary h2 {
+	margin: 0.5em 0;
+}
+
+section.wordcamp-bookmarklet .summary h4 {
+	margin: 0.2em 0;
+}
+
 section.wordcamp-bookmarklet:first-of-type {
 	display: block;
 }
