@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [1.1.0] - 2026-04-03
 ### Added
- - Added statistics summary for all tickets.
+ - Statistics summary for all tickets.
 
 ### Changed
  - Used `alasql` tables.
