@@ -169,7 +169,7 @@ WordCamp.Bookmarklet = class {
 				ticket: $( this ).find( '.tix_ticket' ).text(),
 				ticket_price: parseInt( $( this ).find( '.tix_ticket_price' ).text().replace( /[^\d.]/g, '' ) ),
 				coupon: $( this ).find( '.tix_coupon' ).text(),
-				reservation: $( this ).find( '.tix_coupon' ).text(),
+				reservation: $( this ).find( '.tix_reservation' ).text(),
 				date: self.getDate( $( this ).find( '.date' ).text() ),
 				is_sponsor: /^SPNS/.test( $( this ).find( '.tix_coupon' ).text() ),
 				is_speaker: /^SPKS/.test( $( this ).find( '.tix_coupon' ).text() ),
@@ -181,37 +181,52 @@ WordCamp.Bookmarklet = class {
 			self._tables.attendees.push( attendee );
 		});
 
+		// Create table.
+		alasql('CREATE TABLE attendees ( id NUMBER, coupon STRING, date STRING, is_attendee BOOLEAN, is_orga BOOLEAN, is_speaker BOOLEAN, is_sponsor BOOLEAN, is_unknown_coupon BOOLEAN, is_volunteer BOOLEAN, name STRING, post_state STRING, reservation STRING, sponsor_name STRING, ticket STRING, ticket_price NUMBER )')
+
+		// Bulk load.
+		alasql.tables.attendees.data = this._tables.attendees;
+
+		// Update is_* for all tickets.
+		[ 'orga', 'sponsor', 'speaker', 'volunteer' ].forEach( function ( role ) {
+			const persons = alasql( 'SELECT name FROM attendees WHERE is_' + role + ' = ?', [true] ).map( a => a.name );
+			alasql( 'UPDATE attendees SET is_' + role + ' = ? WHERE name IN(' + persons.map(() => '?').join(', ') + ')', [ true ].concat( persons ) );
+		});
+
+		// Set is_attendee flag.
+		alasql( 'UPDATE attendees SET is_attendee = ? WHERE NOT (is_speaker = ? OR is_orga = ? OR is_vlounteer = ? OR is_sponsor = ?)', [ true, true,true, true, true] );
+
 		// All people (all days).
-		this.stats.people = alasql( 'SELECT DISTINCT name FROM ? WHERE post_state = "" ORDER BY name', [ this._tables.attendees ] ).map( a => a.name ).sort();
+		this.stats.people = alasql( 'SELECT DISTINCT name FROM attendees WHERE post_state = "" ORDER BY name' ).map( a => a.name ).sort();
 
 		// Get all tickets.
-		this._tables.tickets = alasql('SELECT ticket, ticket_price FROM ? WHERE post_state = "" GROUP BY ticket, ticket_prioce ORDER BY ticket', [ this._tables.attendees ] );
+		this._tables.tickets = alasql('SELECT ticket, ticket_price FROM attendees WHERE post_state = "" GROUP BY ticket, ticket_price ORDER BY ticket' );
 
 		// Add stats for each ticket.
-		Object.values( this._tables.tickets ).map( t => t.ticket ).forEach( function( ticket ) {
+		this._tables.tickets.forEach( function( el ) {
 
-			self.stats.tickets[ ticket ] = {
-				organizers: alasql('SELECT name FROM ? WHERE post_state = "" AND ticket = ? AND is_orga = ? ORDER BY name', [ self._tables.attendees, ticket, true ] ).map( a => a.name ).sort(),
-				speakers: alasql('SELECT name FROM ? WHERE post_state = "" AND ticket = ? AND is_speaker = ? ORDER BY name', [ self._tables.attendees, ticket, true ] ).map( a => a.name ).sort(),
-				// sponsors: alasql('SELECT name FROM ? WHERE post_state = "" AND ticket = ? AND is_sponsor = ? ORDER BY coupon', [ self._tables.attendees, ticket, true ] ).map( a => a.name ).sort(),
-				volunteers: alasql('SELECT name FROM ? WHERE post_state = "" AND ticket = ? AND is_volunteer = ? ORDER BY name', [ self._tables.attendees, ticket, true ] ).map( a => a.name ).sort(),
-				attendees: alasql('SELECT name FROM ? WHERE post_state = "" AND ticket = ? AND coupon = "" ORDER BY name', [ self._tables.attendees, ticket ] ).map( a => a.name ).sort(),
-				unknown_coupon: alasql('SELECT name FROM ? WHERE post_state = "" AND ticket = ? AND is_unknown_coupon = ? ORDER BY name', [ self._tables.attendees, ticket, true ] ).map( a => a.name ).sort(),
-				_post_state: alasql('SELECT name, post_state FROM ? WHERE post_state != "" AND ticket = ? ORDER BY name', [ self._tables.attendees, ticket] )
+			self.stats.tickets[ el.ticket ] = {
+				attendees: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_attendee = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
+				organizers: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_orga = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
+				speakers: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_speaker = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
+				// sponsors: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_sponsor = ? ORDER BY coupon', [ el.ticket, true ] ).map( a => a.name ).sort(),
+				volunteers: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_volunteer = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
+				unknown_coupon: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_unknown_coupon = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
+				_post_state: alasql('SELECT name, post_state FROM attendees WHERE post_state != "" AND ticket = ? ORDER BY name' )
 			};
 
-			let sponsors_details = alasql('SELECT name, sponsor_name, coupon FROM ? where post_state = "" AND ticket = ? AND is_sponsor = ? ORDER BY sponsor_name, name', [self._tables.attendees, ticket, true] );
-			self.stats.tickets[ ticket ].sponsors = { _total: 0 };
-			sponsors_details.forEach( function( el ) {
-				if ( typeof self.stats.tickets[ ticket ].sponsors[ el.sponsor_name ] === 'undefined' ) {
-					self.stats.tickets[ ticket ].sponsors[ el.sponsor_name ] = {}
+			const sponsors_details = alasql('SELECT name, sponsor_name, coupon FROM attendees where post_state = "" AND ticket = ? AND is_sponsor = ? ORDER BY sponsor_name, name', [ el.ticket, true ] );
+			self.stats.tickets[ el.ticket ].sponsors = { _total: 0 };
+			sponsors_details.forEach( function( sponsor ) {
+				if ( typeof self.stats.tickets[ el.ticket ].sponsors[ sponsor.sponsor_name ] === 'undefined' ) {
+					self.stats.tickets[ el.ticket ].sponsors[ sponsor.sponsor_name ] = {}
 				}
-				self.stats.tickets[ ticket ].sponsors[ el.sponsor_name ][ el.name ] = el.coupon.replace( /^SPNS-((\w+)-\d+).*/, '$1' );
-				self.stats.tickets[ ticket ].sponsors._total++;
+				self.stats.tickets[ el.ticket ].sponsors[ sponsor.sponsor_name ][ sponsor.name ] = sponsor.coupon.replace( /^SPNS-((\w+)-\d+).*/, '$1' );
+				self.stats.tickets[ el.ticket ].sponsors._total++;
 			});
 
 			// Add counters
-			self.stats.tickets[ ticket ]._total = self.stats.tickets[ ticket ].organizers.length + self.stats.tickets[ ticket ].speakers.length + self.stats.tickets[ ticket ].sponsors._total + self.stats.tickets[ ticket ].volunteers.length + self.stats.tickets[ ticket ].attendees.length + self.stats.tickets[ ticket ].unknown_coupon.length;
+			self.stats.tickets[ el.ticket ]._total = self.stats.tickets[ el.ticket ].organizers.length + self.stats.tickets[ el.ticket ].speakers.length + self.stats.tickets[ el.ticket ].sponsors._total + self.stats.tickets[ el.ticket ].volunteers.length + self.stats.tickets[ el.ticket ].attendees.length + self.stats.tickets[ el.ticket ].unknown_coupon.length;
 		});
 	}
 
@@ -236,9 +251,9 @@ WordCamp.Bookmarklet = class {
 
 				let summary = '';
 				this._tables.tickets.forEach( el => {
-					summary += `<h2>${ el.ticket }: ${ this.stats.tickets[ el.ticket ]._total }</h2>`;
+					summary += `<h2>${ el.ticket }</h2><h4>${ this.stats.tickets[ el.ticket ]._total } tickets</h4>`;
 
-					for (const [key, value] of Object.entries( this.stats.tickets[ el.ticket ] ) ) {
+					for ( const [key, value] of Object.entries( this.stats.tickets[ el.ticket ] ) ) {
 						if ( /^_/.test( key ) ) {
 							continue;
 						}
@@ -292,8 +307,9 @@ WordCamp.Bookmarklet = class {
 	 * Get date from column.
 	 */
 	getDate( string ) {
-		let date = string.replace( /^\s*(published|pubblicato)\s*((\d+)\/(\d+)\/(\d+)).*/i, '$2' );
-		if ( 'Pubblicato' === RegExp.$1 ) {
+		let date = string.replace( /^\s*([^\d]*)\s*((\d+)\/(\d+)\/(\d+)).*/i, '$2' );
+		// Italian date format and similar.
+		if ( RegExp.$3.length < 4 ) {
 			date = RegExp.$5 + '/' + RegExp.$4 + '/' + RegExp.$3;
 		}
 		return date;
@@ -305,10 +321,10 @@ WordCamp.Bookmarklet = class {
 	createTicketChars() {
 
 		// Last ticket.
-		let last_ticket = alasql( 'SELECT date FROM ? WHERE post_state = "" ORDER BY id DESC LIMIT 1', [ this._tables.attendees] );
+		let last_ticket = alasql( 'SELECT date FROM attendees WHERE post_state = "" ORDER BY id DESC LIMIT 1' );
 
 		// Get sold tickets (any type).
-		let total_tickets_sold = alasql( 'SELECT date, COUNT(*) AS c FROM ? WHERE post_state = "" AND coupon = "" AND ticket_price > 0 GROUP BY date ORDER BY date asc', [ this._tables.attendees ] );
+		let total_tickets_sold = alasql( 'SELECT date, COUNT(*) AS c FROM attendees WHERE post_state = "" AND coupon = "" AND ticket_price > 0 GROUP BY date ORDER BY date asc' );
 
 		// Complete days range.
 		const x_axis = this.generateDateRange( total_tickets_sold[0].date, last_ticket.length ? last_ticket[0].date : undefined );
@@ -344,7 +360,7 @@ WordCamp.Bookmarklet = class {
 		];
 
 		Object.values( this._tables.tickets ).map( t => t.ticket ).forEach( ticket => {
-			let tickets_sold = alasql( 'SELECT date, COUNT(*) AS c FROM ? WHERE post_state = "" AND ticket = ? GROUP BY date ORDER BY date asc', [ this._tables.attendees, ticket ] );
+			let tickets_sold = alasql( 'SELECT date, COUNT(*) AS c FROM attendees WHERE post_state = "" AND ticket = ? GROUP BY date ORDER BY date asc', [ ticket ] );
 			dataset.push(
 				{
 					label: ticket,
@@ -478,6 +494,7 @@ WordCamp.Bookmarklet = class {
 		$( '#wordcamp-bookmarklet').remove();
 		this.closeModal();
 		delete window.WordCamp;
+		alasql( 'DROP TABLE attendees' );
 	}
 };
 
