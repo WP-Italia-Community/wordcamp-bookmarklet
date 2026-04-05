@@ -6,6 +6,17 @@ WordCamp.Bookmarklet = class {
 
 	#currentOverlay;
 
+	#default_conf = {
+		start_date: '2026/05/08',
+		end_date: '2026/05/09',
+		coupon_regex: {
+			sponsor: '^SPNS-([^-]*).*', // $1 must contain sponsor name.
+			speaker: '^SPKS',
+			organizer: '^ORGA',
+			volunteer: '^VLNS'
+		}
+	};
+
 	/**
 	 * Class constructor.
 	 * @param args
@@ -34,8 +45,8 @@ WordCamp.Bookmarklet = class {
 			return;
 		}
 
-		// Init stats.
-		this.stats = {};
+		// Get settings.
+		this.getSettings();
 
 		// Table.
 		this._tables = {
@@ -149,14 +160,27 @@ WordCamp.Bookmarklet = class {
 
 	/**
 	 * Get stats from attendees list.
+	 *
+	 * @param {Boolean} [force_update?false] - Force update/rebuild data.
 	 */
-	getAttendees() {
+	getAttendees( force_update = false ) {
+
+		// Resets data.
+		if ( true === force_update ) {
+			this._tables = {
+				attendees: [],
+				tickets: []
+			};
+		}
 
 		if ( this._tables.attendees.length > 0 ) {
 			return;
 		}
 
-		this.stats.tickets = {};
+		this.stats = {
+			tickets: {}
+		};
+
 		const self = this;
 
 		$('.wp-list-table tbody tr').each( function() {
@@ -171,30 +195,38 @@ WordCamp.Bookmarklet = class {
 				coupon: $( this ).find( '.tix_coupon' ).text(),
 				reservation: $( this ).find( '.tix_reservation' ).text(),
 				date: self.getDate( $( this ).find( '.date' ).text() ),
-				is_sponsor: /^SPNS/.test( $( this ).find( '.tix_coupon' ).text() ),
-				is_speaker: /^SPKS/.test( $( this ).find( '.tix_coupon' ).text() ),
-				is_orga: /^ORGA/.test( $( this ).find( '.tix_coupon' ).text() ),
-				is_volunteer: /^VLNS/.test( $( this ).find( '.tix_coupon' ).text() )
+				is_sponsor: self.coupon_regex.sponsor.test( $( this ).find( '.tix_coupon' ).text() ),
+				is_speaker: self.coupon_regex.speaker.test( $( this ).find( '.tix_coupon' ).text() ),
+				is_organizer: self.coupon_regex.organizer.test( $( this ).find( '.tix_coupon' ).text() ),
+				is_volunteer: self.coupon_regex.volunteer.test( $( this ).find( '.tix_coupon' ).text() )
 			};
-			attendee.is_unknown_coupon = attendee.coupon && ! ( attendee.is_sponsor || attendee.is_speaker || attendee.is_orga || attendee.is_volunteer );
-			attendee.sponsor_name = /^SPNS-([^-]*).*/.test( attendee.coupon ) ? RegExp.$1.toLowerCase().replace(/^(.)/, ( match ) => match.toUpperCase() ) : '';
+			attendee.is_unknown_coupon = attendee.coupon && ! ( attendee.is_sponsor || attendee.is_speaker || attendee.is_organizer || attendee.is_volunteer );
+			attendee.sponsor_name = self.coupon_regex.sponsor.test( attendee.coupon ) ? RegExp.$1.toLowerCase().replace(/^(.)/, ( match ) => match.toUpperCase() ) : '';
 			self._tables.attendees.push( attendee );
 		});
 
+		// Drop anymay.
+		alasql( 'DROP TABLE IF EXISTS attendees' );
+
 		// Create table.
-		alasql('CREATE TABLE attendees ( id NUMBER, coupon STRING, date STRING, is_attendee BOOLEAN, is_orga BOOLEAN, is_speaker BOOLEAN, is_sponsor BOOLEAN, is_unknown_coupon BOOLEAN, is_volunteer BOOLEAN, name STRING, post_state STRING, reservation STRING, sponsor_name STRING, ticket STRING, ticket_price NUMBER )')
+		alasql( 'CREATE TABLE attendees ( id NUMBER, coupon STRING, date STRING, is_attendee BOOLEAN, is_organizer BOOLEAN, is_speaker BOOLEAN, is_sponsor BOOLEAN, is_unknown_coupon BOOLEAN, is_volunteer BOOLEAN, name STRING, post_state STRING, reservation STRING, sponsor_name STRING, ticket STRING, ticket_price NUMBER )' )
 
 		// Bulk load.
 		alasql.tables.attendees.data = this._tables.attendees;
 
 		// Update is_* for all tickets.
-		[ 'orga', 'sponsor', 'speaker', 'volunteer' ].forEach( function ( role ) {
+		[ 'organizer', 'sponsor', 'speaker', 'volunteer' ].forEach( function ( role ) {
 			const persons = alasql( 'SELECT name FROM attendees WHERE is_' + role + ' = ?', [true] ).map( a => a.name );
 			alasql( 'UPDATE attendees SET is_' + role + ' = ? WHERE name IN(' + persons.map(() => '?').join(', ') + ')', [ true ].concat( persons ) );
 		});
 
 		// Set is_attendee flag.
-		alasql( 'UPDATE attendees SET is_attendee = ? WHERE NOT (is_speaker = ? OR is_orga = ? OR is_vlounteer = ? OR is_sponsor = ?)', [ true, true,true, true, true] );
+		alasql( 'UPDATE attendees SET is_attendee = ? WHERE NOT (is_speaker = ? OR is_organizer = ? OR is_vlounteer = ? OR is_sponsor = ? OR is_unknown_coupon = ?)', [ true, true,true, true, true, true] );
+
+		// Update sponsor_name for all sponsor attendee tickets.
+		alasql( 'SELECT DISTINCT name, sponsor_name FROM attendees WHERE is_sponsor = true AND sponsor_name != ""' ).forEach( function(row) {
+			alasql( 'UPDATE attendees SET sponsor_name = ? WHERE name = ? AND is_sponsor = ? AND ( sponsor_name = "" OR sponsor_name IS NULL )', [ row.sponsor_name, row.name, true ] );
+		});
 
 		// All people (all days).
 		this.stats.people = alasql( 'SELECT DISTINCT name FROM attendees WHERE post_state = "" ORDER BY name' ).map( a => a.name ).sort();
@@ -207,7 +239,7 @@ WordCamp.Bookmarklet = class {
 
 			self.stats.tickets[ el.ticket ] = {
 				attendees: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_attendee = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
-				organizers: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_orga = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
+				organizers: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_organizer = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
 				speakers: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_speaker = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
 				// sponsors: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_sponsor = ? ORDER BY coupon', [ el.ticket, true ] ).map( a => a.name ).sort(),
 				volunteers: alasql('SELECT name FROM attendees WHERE post_state = "" AND ticket = ? AND is_volunteer = ? ORDER BY name', [ el.ticket, true ] ).map( a => a.name ).sort(),
@@ -221,7 +253,7 @@ WordCamp.Bookmarklet = class {
 				if ( typeof self.stats.tickets[ el.ticket ].sponsors[ sponsor.sponsor_name ] === 'undefined' ) {
 					self.stats.tickets[ el.ticket ].sponsors[ sponsor.sponsor_name ] = {}
 				}
-				self.stats.tickets[ el.ticket ].sponsors[ sponsor.sponsor_name ][ sponsor.name ] = sponsor.coupon.replace( /^SPNS-((\w+)-\d+).*/, '$1' );
+				self.stats.tickets[ el.ticket ].sponsors[ sponsor.sponsor_name ][ sponsor.name ] = sponsor.coupon;//.replace( self.coupon_regex.sponsor, '$1' );
 				self.stats.tickets[ el.ticket ].sponsors._total++;
 			});
 
@@ -247,42 +279,89 @@ WordCamp.Bookmarklet = class {
 					return;
 				}
 
+				// Compute stats.
 				this.getAttendees();
 
-				let summary = '';
-				this._tables.tickets.forEach( el => {
-					summary += `<h2>${ el.ticket }</h2><h4>${ this.stats.tickets[ el.ticket ]._total } tickets</h4>`;
-
-					for ( const [key, value] of Object.entries( this.stats.tickets[ el.ticket ] ) ) {
-						if ( /^_/.test( key ) ) {
-							continue;
-						}
-						summary += `<div><span class="label">${key}</span>: <span class="value">${ 'sponsors' === key ? value._total : value.length}</span></div>`;
-					}
-				});
-
-				this.openModal( { title: 'Tickets info', content: `\
-<h2 class="nav-tab-wrapper wordcamp-bookmarklet">\
-	<a class="nav-tab nav-tab-active wordcamp-bookmarklet">Summary</a>\
-	<a class="nav-tab wordcamp-bookmarklet">Charts</a>\
-	<a class="nav-tab wordcamp-bookmarklet">JSON Data viewer</a>\
-	<a class="nav-tab wordcamp-bookmarklet">Credits</a>\
-</h2>\
-<section class="wordcamp-bookmarklet">\
-<div class="summary">${summary}</div>\
-</section>\
-<section class="wordcamp-bookmarklet">\
-	<div class="wordcamp-bookmarklet-tickets-container">\
-		<canvas id="wordcamp-bookmarklet-tickets-chart"></canvas>\
-	</div>\
-</section>\
-<section class="wordcamp-bookmarklet"><pre class="json-viewer"/></section>
-<section class="wordcamp-bookmarklet">\
-<div class="summary">
-2026 - WordPress Italia Community & Enrico Sorcinelli - <a href="https://github.com/WP-Italia-Community/wordcamp-bookmarklet" target="_blank">https://github.com/WP-Italia-Community/wordcamp-bookmarklet</a>
-</div>\
-</section>\
+				this.openModal( { title: 'Tickets info', content: `
+<h2 class="nav-tab-wrapper wordcamp-bookmarklet">
+	<a class="nav-tab nav-tab-active wordcamp-bookmarklet">Summary</a>
+	<a class="nav-tab wordcamp-bookmarklet">Charts</a>
+	<a class="nav-tab wordcamp-bookmarklet">JSON Data viewer</a>
+	<a class="nav-tab wordcamp-bookmarklet">Settings</a>
+	<a class="nav-tab wordcamp-bookmarklet">Credits</a>
+</h2>
+<section class="wordcamp-bookmarklet">
+	<div class="summary"></div>
+</section>
+<section class="wordcamp-bookmarklet">
+	<div class="wordcamp-bookmarklet-tickets-container">
+		<canvas id="wordcamp-bookmarklet-tickets-chart"></canvas>
+	</div>
+</section>
+<section class="wordcamp-bookmarklet">
+	<pre class="json-viewer"/>
+</section>
+<section class="wordcamp-bookmarklet settings">
+	<p>
+		The bookmarklet is tuned for WordCamp Torino 2026, but the following settings may allow it to work correctly for other WordCamps as well.	
+	</p>
+	<table class="form-table" role="presentation">
+	    <tbody>
+	        <tr>
+	            <th scope="row"><label for="wordcamp-bookmarklet-start-date">Start date</label></th>
+	            <td><input type="text" id="wordcamp-bookmarklet-start-date" value="${ _.escape( this.conf.start_date ) }" class="regular-text"></td>
+	        </tr>
+   	        <tr>
+	            <th scope="row"><label for="wordcamp-bookmarklet-end-date">End date</label></th>
+	            <td><input type="text" id="wordcamp-bookmarklet-end-date" value="${ _.escape( this.conf.end_date ) }" class="regular-text"></td>
+	        </tr>
+	        <tr>
+	            <th scope="row">Coupon regex</th>
+	            <td>
+	                <p>
+	                    Even if Coupons code can be all different, if  yours have something in common, this can be used to group the different types of participants in he summary.
+	                </p>
+	                <p>
+	                    <span class="coupon-regex">Organizers</span><input type="text" id="wordcamp-bookmarklet-coupon-organizer" value="${ _.escape( this.conf.coupon_regex.organizer ) }" class="regular-text validate-regex">
+	                </p>
+	                <p>
+	                    <span class="coupon-regex">Speakers</span><input type="text" id="wordcamp-bookmarklet-coupon-speaker" value="${ _.escape( this.conf.coupon_regex.speaker ) }" class="regular-text validate-regex">
+	                </p>
+	                <p>
+	                    <span class="coupon-regex">Sponsors</span><input type="text" id="wordcamp-bookmarklet-coupon-sponsor" value="${ _.escape( this.conf.coupon_regex.sponsor ) }" class="regular-text validate-regex">
+	                    <br>
+	                    <span class="description">Captured Group 1 should contain sponsor name.</span>
+	                </p>
+	                <p>
+	                    <span class="coupon-regex">Volunteers</span><input type="text" id="wordcamp-bookmarklet-coupon-volunteer" value="${ _.escape( this.conf.coupon_regex.volunteer ) }" class="regular-text validate-regex">
+	                </p>
+	            </td>
+	        </tr>
+	    </tbody>
+	</table>
+	<p class="submit">
+	<input type="submit" id="wordcamp-bookmarklet-save-settings" class="button button-primary" value="Save settings">
+	<input type="submit" id="wordcamp-bookmarklet-restore-settings" class="button" value="Restore default settings">
+	</p>
+</section>
+<section class="wordcamp-bookmarklet">
+	<div class="credits">
+	<div>
+		This bookmarklet uses data from the ticket attendees page to aggregate some information on sales trends and was created as a POC to evaluate the usefulness of integrating it into the backoffice.
+	</div>
+	<p>2026 - WordPress Italia Community & Enrico Sorcinelli - <a href="https://github.com/WP-Italia-Community/wordcamp-bookmarklet" target="_blank">https://github.com/WP-Italia-Community/wordcamp-bookmarklet</a></p>
+	</div>
+</section>
 ` } );
+
+				// Update summary.
+				this.createSummary( true );
+
+				// Update charts.
+				this.createTicketChars();
+
+				// Updata JSON data viewer.
+				this.updateJsonViewer();
 
 				// Tab managements.
 				$( '.nav-tab-wrapper.wordcamp-bookmarklet a' ).on( 'click', function () {
@@ -294,11 +373,34 @@ WordCamp.Bookmarklet = class {
 					return false;
 				} );
 
-				this.createTicketChars();
+				// Handle save settings button.
+				$( '#wordcamp-bookmarklet-save-settings' ).on(
+					'click',
+					( e ) => {
+						e.preventDefault();
+						e.stopPropagation();
+						this.saveSettings();
+					}
+				);
 
-				// Add JSON data.
-				let json_viewer = new JsonEditor( '.wordcamp-bookmarklet-modal-body .json-viewer', undefined, { editable: false, collapsed: true } );
-				json_viewer.load( this.stats );
+				// Handle restore settings button.
+				$( '#wordcamp-bookmarklet-restore-settings' ).on(
+					'click',
+					( e ) => {
+						e.preventDefault();
+						e.stopPropagation();
+						this.restoreDefaultSettings();
+					}
+				);
+
+				// Handle regex validation
+				$( '.wordcamp-bookmarklet.settings .validate-regex' ).on(
+					'keyup keydown',
+					this.validateRegexField.bind( this )
+				);
+
+				// Init regex validation.
+				$( '.wordcamp-bookmarklet.settings .validate-regex' ).trigger( 'keydown' );
 			}
 		);
 	}
@@ -316,9 +418,48 @@ WordCamp.Bookmarklet = class {
 	}
 
 	/**
+	 * Update JSON data viewer.
+	 */
+	updateJsonViewer() {
+		let $json_viewer = $( '.wordcamp-bookmarklet-modal-body .json-viewer' );
+		if ( typeof $json_viewer.data( 'json-viewer' ) === 'undefined' ) {
+			$json_viewer.data( 'json-viewer', new JsonEditor( '.wordcamp-bookmarklet-modal-body .json-viewer', undefined, { editable: false, collapsed: true } ) );
+		}
+		$json_viewer.data( 'json-viewer' ).load( this.stats );
+	}
+
+	/**
+	 * Create summary
+	 *
+	 * @param {Boolean} [update=false]
+	 *
+	 * @return {string}
+	 */
+	createSummary( update = false ) {
+		let summary = '';
+		this._tables.tickets.forEach( el => {
+			summary += `<h2>${ el.ticket }</h2><h4>${ this.stats.tickets[ el.ticket ]._total } tickets</h4>`;
+
+			for ( const [key, value] of Object.entries( this.stats.tickets[ el.ticket ] ) ) {
+				if ( /^_/.test( key ) ) {
+					continue;
+				}
+				summary += `<div><span class="label">${key}</span>: <span class="value">${ 'sponsors' === key ? value._total : value.length}</span></div>`;
+			}
+		});
+
+		if ( update ) {
+			$( '.wordcamp-bookmarklet .summary' ).html( summary );
+		}
+		return summary;
+	}
+
+	/**
 	 * Create charts.
 	 */
 	createTicketChars() {
+
+		const $canvas = $('#wordcamp-bookmarklet-tickets-chart' );
 
 		// Last ticket.
 		let last_ticket = alasql( 'SELECT date FROM attendees WHERE post_state = "" ORDER BY id DESC LIMIT 1' );
@@ -344,7 +485,7 @@ WordCamp.Bookmarklet = class {
 				tension: 0.3 // Rende la linea leggermente curva (smooth)
 			},
 			{
-				label: 'Day by Day',
+				label: 'Daily sales',
 				data: this.fillChartDataRange({
 					data_x: x_axis,
 					data_y: total_tickets_sold,
@@ -380,37 +521,48 @@ WordCamp.Bookmarklet = class {
 			)
 		});
 
-		new Chart(
-			document.getElementById( 'wordcamp-bookmarklet-tickets-chart' ).getContext( '2d' ),
-			{
-	 			type: 'line',
-				data: {
-					labels: x_axis.map( t => t.replace( /^\d+\//, '' ) ), // Asse X
-					datasets: dataset
-				},
-				options: {
-					responsive: true,
-					maintainAspectRatio: false,
-					scales: {
-						y: {
-							beginAtZero: true,
-							title: { display: true, text: 'Sold' }
-						},
-						x: {
-							title: { display: true, text: 'Day' }
+		// Destroy if needed.
+		if ( $canvas.data( 'chart' ) ) {
+			$canvas.data( 'chart' ).destroy();
+        }
+
+	    $canvas.data(
+			'chart',
+			new Chart(
+				document.getElementById( 'wordcamp-bookmarklet-tickets-chart' ).getContext( '2d' ),
+				{
+		            type: 'line',
+					data: {
+						labels: x_axis.map( t => t.replace( /^\d+\//, '' ) ), // Asse X
+						datasets: dataset
+					},
+					options: {
+						responsive: true,
+						maintainAspectRatio: false,
+						scales: {
+							y: {
+								beginAtZero: true,
+								title: { display: true, text: 'Sold' }
+							},
+							x: {
+								title: { display: true, text: 'Day' }
+							}
 						}
 					}
 				}
-			}
-		);
+			)
+	    );
 	}
 
 	/**
 	 * Generate date range array.
 	 *
-	 * return {Array}
+	 * @param {String} start
+	 * @param {String }end
+	 *
+	 * @return {[]}
 	 */
-	generateDateRange( start, end  ) {
+	generateDateRange( start, end ) {
 		const dates = [];
 		let current = new Date( start );
 		const today = end ? new Date( end ) : new Date();
@@ -429,8 +581,10 @@ WordCamp.Bookmarklet = class {
 	}
 
 	/**
+	 * Fill data range.
 	 *
-	 * @param args
+	 * @param {Object} args
+	 *
 	 * @return {Array}
 	 */
 	fillChartDataRange( args ) {
@@ -469,6 +623,10 @@ WordCamp.Bookmarklet = class {
 
 	/**
 	 * Get assets.
+	 *
+	 * @param {Array} assets
+	 *
+	 * @return {Promise}
 	 */
 	addStaticAssets( assets = [] ) {
 
@@ -488,13 +646,157 @@ WordCamp.Bookmarklet = class {
 	}
 
 	/**
-	 * Dev helper util avoiding page reload on code changes.
+	 * Get settings.
+	 *
+	 * @return {Object}
+	 */
+	getSettings() {
+		const raw_settings = localStorage.getItem( 'wordcamp_bookmarklet_settings' );
+		this.conf = raw_settings ? JSON.parse( raw_settings ) : this.#default_conf;
+		this.buildCouponRegex();
+		return this.conf;
+	}
+
+	/**
+	 * Save settings on local storage.
+	 */
+	saveSettings() {
+		const settings = {
+			start_date: $( '#wordcamp-bookmarklet-start-date').val(),
+			end_date: $( '#wordcamp-bookmarklet-end-date').val(),
+			coupon_regex: {
+				organizer: $( '#wordcamp-bookmarklet-coupon-organizer').val(),
+				speaker: $( '#wordcamp-bookmarklet-coupon-speaker').val(),
+				sponsor: $( '#wordcamp-bookmarklet-coupon-sponsor').val(),
+				volunteer: $( '#wordcamp-bookmarklet-coupon-volunteer').val()
+			}
+		};
+		console.log( 'saved', settings )
+		localStorage.setItem( 'wordcamp_bookmarklet_settings', JSON.stringify( settings ) );
+		this.getSettings();
+
+		this.buildCouponRegex();
+
+		// Refresh stats
+		this.getAttendees( true );
+
+		// Update summary.
+		this.createSummary( true );
+
+		// Update charts.
+		this.createTicketChars();
+
+		this.updateJsonViewer();
+	}
+
+	/**
+	 * Restore default settings.
+	 */
+	restoreDefaultSettings() {
+		$( '#wordcamp-bookmarklet-start-date').val( this.#default_conf.start_date );
+		$( '#wordcamp-bookmarklet-end-date').val( this.#default_conf.end_date );
+		$( '#wordcamp-bookmarklet-coupon-organizer').val( this.#default_conf.coupon_regex.organizer );
+		$( '#wordcamp-bookmarklet-coupon-speaker').val( this.#default_conf.coupon_regex.speaker );
+		$( '#wordcamp-bookmarklet-coupon-sponsor').val( this.#default_conf.coupon_regex.sponsor );
+		$( '#wordcamp-bookmarklet-coupon-volunteer').val( this.#default_conf.coupon_regex.volunteer );
+
+		$( '#wordcamp-bookmarklet-save-settings' ).trigger( 'click' );
+
+	}
+
+	/**
+	 * Build coupon regexes.
+	 */
+	buildCouponRegex() {
+		this.coupon_regex = {
+			organizer: new RegExp( this.conf.coupon_regex.organizer ),
+			speaker: new RegExp( this.conf.coupon_regex.speaker ),
+			sponsor: new RegExp( this.conf.coupon_regex.sponsor ),
+			volunteer: new RegExp( this.conf.coupon_regex.volunteer )
+		};
+	}
+
+	/**
+	 * Test if current string is a valid regular expression
+	 *
+	 * @param {Object} args - The argument has following properties.
+	 * @param {string|RegExp} args.regex - Regular expression to check.
+	 * @param {boolean} [args.debug=false] - Log debug informations.
+	 *
+	 * @return {boolean|exception} Return `true` if `regex` is a valid regular expression, otherwise `false` or throw an Exception.
+	 */
+	isValidRegExp( args = {} ) {
+		args = $.extend(
+			true,
+			{
+				regex: undefined,
+				debug: false,
+			},
+			args
+		);
+
+		if ( typeof( args.regex ) === 'undefined' ) {
+			return false;
+		}
+		// Check for regexp constructor
+		if ( args.regex.constructor.name !== 'RegExp' ) {
+			// Try to create new regexp
+			try {
+				args.regex = new RegExp( args.regex );
+			}
+			catch(e) {
+				if ( args.debug ) {
+					console.log( e, { prefix: args.logPrefix } );
+				}
+				return e;
+			}
+		}
+		if ( args.debug ) {
+			console.log( args.regex, { prefix: args.logPrefix } );
+		}
+		return true;
+	}
+
+	/**
+	 * Validate if fields is current target value contains a valid regular expression.
+	 *
+	 * @param event
+	 */
+	validateRegexField( event ) {
+		const $container = $( $( event.target ) ).parent();
+		const is_valid_regexp = this.isValidRegExp( { regex: $( event.target ).val() } );
+
+		// Bad regexp
+		if ( true !== is_valid_regexp ) {
+			$container.find('.ok').hide();
+			$container.find('.ko').remove();
+			$( event.target ).after('<span class="ko"> <span class="dashicons dashicons-warning"></span> ' + is_valid_regexp.name + ': ' + is_valid_regexp.message + '</span>' );
+			$( '#wordcamp-bookmarklet-save-settings').prop( 'disabled', true );
+		}
+		// Regexp OK
+		else {
+			$container.find('.ko').remove();
+			if ( ! $container.find('.ok').length ) {
+				$( event.target ).after( '<span class="ok"> <span class="dashicons dashicons-yes-alt"></span> Valid regular expression</span>' );
+			}
+			else {
+				$container.find('.ok').show();
+			}
+			$( '#wordcamp-bookmarklet-save-settings').prop( 'disabled', false );
+		}
+	}
+
+	/**
+	 * Developer helper util avoiding page reload on code changes.
 	 */
 	destroy() {
-		$( '#wordcamp-bookmarklet').remove();
-		this.closeModal();
-		delete window.WordCamp;
-		alasql( 'DROP TABLE attendees' );
+		try {
+			$( '#wordcamp-bookmarklet').remove();
+			this.closeModal();
+			delete window.WordCamp;
+			alasql( 'DROP TABLE attendees' );
+		}
+		catch ( e) {}
 	}
 };
 
