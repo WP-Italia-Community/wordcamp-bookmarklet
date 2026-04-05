@@ -127,9 +127,11 @@ h2.nav-tab-wrapper.wordcamp-bookmarklet > a {
 section.wordcamp-bookmarklet {
 	max-height: 68vh;
 	overflow-y: auto;
+	padding: 0 10px;
 }
 
-section.wordcamp-bookmarklet .summary  {
+section.wordcamp-bookmarklet .summary,
+section.wordcamp-bookmarklet .credits {
 	font-size: 1.2em;
 	padding: 10px ;
 }
@@ -140,6 +142,23 @@ section.wordcamp-bookmarklet .summary span.label {
 
 section.wordcamp-bookmarklet .summary span.value {
 	font-weight: bold;
+}
+
+section.wordcamp-bookmarklet.settings span.coupon-regex {
+	display: inline-block;
+	min-width: 7em;
+}
+
+section.wordcamp-bookmarklet.settings .dashicons {
+	line-height: inherit;;
+}
+
+section.wordcamp-bookmarklet.settings .ok {
+	color: green;
+}
+
+section.wordcamp-bookmarklet.settings .ko {
+	color: red;
 }
 
 /* chartjs */
