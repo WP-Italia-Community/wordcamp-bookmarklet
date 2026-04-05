@@ -122,6 +122,25 @@ section.wordcamp-bookmarklet:first-of-type {
 
 h2.nav-tab-wrapper.wordcamp-bookmarklet > a {
 	cursor: pointer;
+	border-top-left-radius: 4px;
+	border-top-right-radius: 4px;
+}
+
+h2.nav-tab-wrapper.wordcamp-bookmarklet .nav-tab-active,
+h2.nav-tab-wrapper.wordcamp-bookmarklet .nav-tab-active:hover,
+h2.nav-tab-wrapper.wordcamp-bookmarklet .nav-tab-active:focus,
+h2.nav-tab-wrapper.wordcamp-bookmarklet .nav-tab-active:focus:active {
+	border-top: #0073aa 3px solid;
+	margin-top: -2px;
+}
+
+h2.nav-tab-wrapper.wordcamp-bookmarklet .nav-tab:not(.nav-tab-active):hover {
+	background-color: #f0f0f1;
+}
+
+h2.nav-tab-wrapper.wordcamp-bookmarklet .nav-tab-active {
+	background-color: #fff;
+	border-bottom: 1px solid #fff;
 }
 
 section.wordcamp-bookmarklet {
