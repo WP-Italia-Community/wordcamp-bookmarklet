@@ -1,8 +1,14 @@
-// Make all in a closure
+// Make all in a closure.
 ;(function ($) {
 
 window.WordCamp = window.WordCamp || {};
 WordCamp.Bookmarklet = class {
+
+	// Version.
+	static #VERSION = '1.2.1';
+	static get VERSION() {
+		return this.#VERSION;
+    }
 
 	#currentOverlay;
 
@@ -16,6 +22,8 @@ WordCamp.Bookmarklet = class {
 			volunteer: '^VLNS'
 		}
 	};
+
+	#wordcamp_uri = ajaxurl.replace(/^(.*\/)wp-admin\/.*/, '$1');
 
 	/**
 	 * Class constructor.
@@ -40,7 +48,7 @@ WordCamp.Bookmarklet = class {
 			args
 		);
 
-		// Doesn't nothiong. Check for init
+		// Does nothing. Check for init
 		if ( $( '#wordcamp-bookmarklet' ).length > 0) {
 			return;
 		}
@@ -87,6 +95,14 @@ WordCamp.Bookmarklet = class {
 				},
 				{
 					src: 'https://cdn.jsdelivr.net/npm/chart.js',
+					type: 'text/javascript'
+				},
+				{
+					src: 'https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js',
+					type: 'text/javascript'
+				},
+				{
+					src: 'https://cdn.jsdelivr.net/gh/enrico-sorcinelli/local-storage-cache@main/dist/local-storage-cache.min.js',
 					type: 'text/javascript'
 				}
 			])
@@ -221,7 +237,7 @@ WordCamp.Bookmarklet = class {
 		});
 
 		// Set is_attendee flag.
-		alasql( 'UPDATE attendees SET is_attendee = ? WHERE NOT (is_speaker = ? OR is_organizer = ? OR is_vlounteer = ? OR is_sponsor = ? OR is_unknown_coupon = ?)', [ true, true,true, true, true, true] );
+		alasql( 'UPDATE attendees SET is_attendee = ? WHERE NOT (is_speaker = ? OR is_organizer = ? OR is_volunteer = ? OR is_sponsor = ? OR is_unknown_coupon = ?)', [ true, true,true, true, true, true] );
 
 		// Update sponsor_name for all sponsor attendee tickets.
 		alasql( 'SELECT DISTINCT name, sponsor_name FROM attendees WHERE is_sponsor = true AND sponsor_name != ""' ).forEach( function(row) {
@@ -263,6 +279,46 @@ WordCamp.Bookmarklet = class {
 	}
 
 	/**
+	 * Helper method to get compete CSV tickets file.
+	 *
+	 * @return {Promise}
+	 */
+	getTickets() {
+		let def = $.Deferred();
+		$.ajax(
+			this.#wordcamp_uri + 'wp-admin/edit.php?post_type=tix_ticket&page=camptix_tools&tix_section=export',
+			{
+				async: false
+			}
+		).done( ( response ) => {
+			var wpnonce = $( response ).find( '#_wpnonce' ).val();
+			$.ajax(
+				this.#wordcamp_uri + 'wp-admin/edit.php?post_type=tix_ticket&page=camptix_tools&tix_section=export&tix_export=1',
+				{
+					method: 'post',
+					data: {
+						post_type: 'tix_ticket',
+						page: 'camptix_tools',
+						tix_section: 'export',
+						tix_export: 1,
+						tix_export_to: 'csv',
+						_wpnonce: wpnonce,
+						tix_export_submit: 1
+					}
+				}
+			).done( function ( response ) {
+				const csv_data = Papa.parse( response, {
+					header: true,
+					dynamicTyping: true
+				});
+				def.resolve( csv_data );
+			});
+		});
+
+		return def.promise();
+	}
+
+	/**
 	 * Add item in admin bar.
  	 */
 	addMenuBarItem() {
@@ -282,7 +338,9 @@ WordCamp.Bookmarklet = class {
 				// Compute stats.
 				this.getAttendees();
 
-				this.openModal( { title: 'Tickets info', content: `
+				this.openModal( {
+					title: 'Tickets info',
+						content: `
 <h2 class="nav-tab-wrapper wordcamp-bookmarklet">
 	<a class="nav-tab nav-tab-active wordcamp-bookmarklet">Summary</a>
 	<a class="nav-tab wordcamp-bookmarklet">Charts</a>
