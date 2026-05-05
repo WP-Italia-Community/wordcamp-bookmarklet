@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [1.2.2] - 2026-05-05
+### Fixed
+ - Total purchased tickets.
+
 ## [1.2.1] - 2026-04-30
 ### Added
  - Settings (local storage) allowing to work for other WordCamps.
