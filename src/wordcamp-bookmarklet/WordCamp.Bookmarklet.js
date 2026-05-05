@@ -5,7 +5,7 @@ window.WordCamp = window.WordCamp || {};
 WordCamp.Bookmarklet = class {
 
 	// Version.
-	static #VERSION = '1.2.1';
+	static #VERSION = '1.2.2';
 	static get VERSION() {
 		return this.#VERSION;
     }
@@ -221,7 +221,7 @@ WordCamp.Bookmarklet = class {
 			self._tables.attendees.push( attendee );
 		});
 
-		// Drop anymay.
+		// Drop anyway.
 		alasql( 'DROP TABLE IF EXISTS attendees' );
 
 		// Create table.
@@ -247,8 +247,8 @@ WordCamp.Bookmarklet = class {
 		// All people (all days).
 		this.stats.people = alasql( 'SELECT DISTINCT name FROM attendees WHERE post_state = "" ORDER BY name' ).map( a => a.name ).sort();
 
-		// Get all tickets.
-		this._tables.tickets = alasql('SELECT ticket, ticket_price FROM attendees WHERE post_state = "" GROUP BY ticket, ticket_price ORDER BY ticket' );
+		// Get all tickets (counting purchaded one).
+		this._tables.tickets = alasql( 'SELECT ticket, ticket_price, COUNT(*) AS purchased FROM attendees WHERE post_state = "" GROUP BY ticket, ticket_price ORDER BY ticket' );
 
 		// Add stats for each ticket.
 		this._tables.tickets.forEach( function( el ) {
@@ -272,9 +272,6 @@ WordCamp.Bookmarklet = class {
 				self.stats.tickets[ el.ticket ].sponsors[ sponsor.sponsor_name ][ sponsor.name ] = sponsor.coupon;//.replace( self.coupon_regex.sponsor, '$1' );
 				self.stats.tickets[ el.ticket ].sponsors._total++;
 			});
-
-			// Add counters
-			self.stats.tickets[ el.ticket ]._total = self.stats.tickets[ el.ticket ].organizers.length + self.stats.tickets[ el.ticket ].speakers.length + self.stats.tickets[ el.ticket ].sponsors._total + self.stats.tickets[ el.ticket ].volunteers.length + self.stats.tickets[ el.ticket ].attendees.length + self.stats.tickets[ el.ticket ].unknown_coupon.length;
 		});
 	}
 
@@ -496,7 +493,7 @@ WordCamp.Bookmarklet = class {
 	createSummary( update = false ) {
 		let summary = '';
 		this._tables.tickets.forEach( el => {
-			summary += `<h2>${ el.ticket }</h2><h4>${ this.stats.tickets[ el.ticket ]._total } tickets</h4>`;
+			summary += `<h2>${ el.ticket }</h2><h4>${ el.purchased } tickets</h4>`;
 
 			for ( const [key, value] of Object.entries( this.stats.tickets[ el.ticket ] ) ) {
 				if ( /^_/.test( key ) ) {
